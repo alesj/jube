@@ -15,10 +15,14 @@
  */
 package io.fabric8.quickstarts.cxfcdi;
 
+import io.undertow.Handlers;
+import io.undertow.Undertow;
+import io.undertow.server.handlers.PathHandler;
+import io.undertow.servlet.Servlets;
+import io.undertow.servlet.api.DeploymentInfo;
+import io.undertow.servlet.api.DeploymentManager;
+import io.undertow.servlet.api.ListenerInfo;
 import org.apache.cxf.cdi.CXFCdiServlet;
-import org.eclipse.jetty.server.Server;
-import org.eclipse.jetty.servlet.ServletContextHandler;
-import org.eclipse.jetty.servlet.ServletHolder;
 import org.jboss.weld.environment.servlet.BeanManagerResourceBindingListener;
 import org.jboss.weld.environment.servlet.Listener;
 
@@ -39,22 +43,31 @@ public final class ApplicationStarter {
             // and use port 8585 by default
             port = "8585";
         }
-        Integer num = Integer.parseInt(port);
+        int num = Integer.parseInt(port);
 
         System.out.println("Starting REST server on port: " + port);
-        final Server server = new Server(num);
 
         // Register and map the dispatcher servlet
-        final ServletHolder servletHolder = new ServletHolder(new CXFCdiServlet());
-        final ServletContextHandler context = new ServletContextHandler();
-        context.setContextPath("/");
-        context.addEventListener(new Listener());
-        context.addEventListener(new BeanManagerResourceBindingListener());
-        context.addServlet(servletHolder, "/cxfcdi/*");
-
-        server.setHandler(context);
-        server.start();
-        server.join();
+        startServer(num);
     }
 
+    private static void startServer(int port) throws Exception {
+        DeploymentInfo servletBuilder = Servlets.deployment()
+            .setClassLoader(ApplicationStarter.class.getClassLoader())
+            .setContextPath("/")
+            .setDeploymentName("cxfcdi.war")
+            .addServlets(Servlets.servlet("CXFCDIServlet", CXFCdiServlet.class).addMapping("/cxfcdi/*"))
+            .addListener(new ListenerInfo(Listener.class))
+            .addListener(new ListenerInfo(BeanManagerResourceBindingListener.class));
+
+        DeploymentManager manager = Servlets.defaultContainer().addDeployment(servletBuilder);
+        manager.deploy();
+        PathHandler path = Handlers.path(Handlers.redirect("/")).addPrefixPath("/", manager.start());
+
+        Undertow server = Undertow.builder()
+            .addHttpListener(port, "localhost")
+            .setHandler(path)
+            .build();
+        server.start();
+    }
 }

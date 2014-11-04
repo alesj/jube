@@ -30,13 +30,15 @@ import io.fabric8.utils.Systems;
 import io.hawt.aether.AetherFacade;
 import io.hawt.git.GitFacade;
 import io.hawt.kubernetes.KubernetesService;
+import io.undertow.Undertow;
+import io.undertow.server.handlers.PathHandler;
+import io.undertow.server.handlers.resource.FileResourceManager;
+import io.undertow.servlet.Servlets;
+import io.undertow.servlet.api.DeploymentInfo;
+import io.undertow.servlet.api.DeploymentManager;
+import io.undertow.servlet.api.ListenerInfo;
+import io.undertow.servlet.api.ServletContainer;
 import org.apache.cxf.cdi.CXFCdiServlet;
-import org.eclipse.jetty.server.Server;
-import org.eclipse.jetty.server.handler.HandlerCollection;
-import org.eclipse.jetty.servlet.ServletContextHandler;
-import org.eclipse.jetty.servlet.ServletHolder;
-import org.eclipse.jetty.util.log.Slf4jLog;
-import org.eclipse.jetty.webapp.WebAppContext;
 import org.jboss.jube.apimaster.ApiMasterService;
 import org.jboss.weld.environment.servlet.BeanManagerResourceBindingListener;
 import org.jboss.weld.environment.servlet.Listener;
@@ -53,28 +55,26 @@ public final class Main {
     public static void main(final String[] args) throws Exception {
         try {
             System.setProperty("hawtio.authenticationEnabled", "false");
-            System.setProperty("org.eclipse.jetty.util.log.class", Slf4jLog.class.getName());
 
             String port = Systems.getEnvVarOrSystemProperty("HTTP_PORT", "HTTP_PORT", "8585");
-            Integer portNumber = Integer.parseInt(port);
+            int portNumber = Integer.parseInt(port);
 
             System.out.println("Starting REST server on port: " + port);
-            final Server server = new Server(portNumber);
 
-            HandlerCollection handlers = new HandlerCollection();
-            server.setHandler(handlers);
+            ServletContainer container = Servlets.defaultContainer();
+            PathHandler pathHandler = new PathHandler();
 
             initaliseGitStuff();
 
             // lets find wars on the classpath
             Set<String> foundURLs = new HashSet<>();
-            findWarsOnClassPath(server, handlers, Thread.currentThread().getContextClassLoader(), foundURLs, portNumber);
+            findWarsOnClassPath(container, pathHandler, Thread.currentThread().getContextClassLoader(), foundURLs, portNumber);
 
             ClassLoader classLoader = Main.class.getClassLoader();
             Thread.currentThread().setContextClassLoader(classLoader);
 
 
-            findWarsOnClassPath(server, handlers, classLoader, foundURLs, portNumber);
+            findWarsOnClassPath(container, pathHandler, classLoader, foundURLs, portNumber);
 
             // In case you want to run in an IDE, and it does not setup the classpath right.. lets
             // find the .war files in the maven dir.  Assumes you set the working dir to the target/jube dir.
@@ -83,7 +83,7 @@ public final class Main {
                 if (files != null) {
                     for (File file : files) {
                         if (file.getName().endsWith(".war")) {
-                            createWebapp(handlers, foundURLs, portNumber, file.getAbsolutePath());
+                            createWebapp(container, pathHandler, foundURLs, portNumber, file.getAbsolutePath());
                         }
                     }
                 }
@@ -95,23 +95,23 @@ public final class Main {
 
             initialiseHawtioStuff();
 
-            // Register and map the dispatcher servlet
-            final ServletHolder servletHolder = new ServletHolder(new CXFCdiServlet());
+            DeploymentInfo servletBuilder = Servlets.deployment()
+                .setClassLoader(classLoader)
+                .setContextPath("/")
+                .setDeploymentName("cxfcdi.war")
+                .addServlets(Servlets.servlet("CXFCDIServlet", CXFCdiServlet.class).addMapping("/api/*").addInitParam("service-list-path", "/cxf/servicesList"))
+                .addListener(new ListenerInfo(Listener.class))
+                .addListener(new ListenerInfo(BeanManagerResourceBindingListener.class));
 
-            // change default service list URI
-            servletHolder.setInitParameter("service-list-path", "/cxf/servicesList");
+            DeploymentManager deploymentManager = container.addDeployment(servletBuilder);
+            deploymentManager.deploy();
+            pathHandler.addExactPath(servletBuilder.getContextPath(), deploymentManager.start());
 
-            final ServletContextHandler context = new ServletContextHandler();
-            context.setClassLoader(classLoader);
-            context.setContextPath("/");
-            context.addEventListener(new Listener());
-            context.addEventListener(new BeanManagerResourceBindingListener());
-            context.addServlet(servletHolder, "/api/*");
-
-            handlers.addHandler(context);
-
+            Undertow server = Undertow.builder()
+                .addHttpListener(portNumber, "localhost")
+                .setHandler(pathHandler)
+                .build();
             server.start();
-            server.join();
         } catch (Throwable e) {
             logException(e);
         }
@@ -171,7 +171,7 @@ public final class Main {
         }
     }
 
-    protected static void findWarsOnClassPath(Server server, HandlerCollection handlers, ClassLoader classLoader, Set<String> foundURLs, Integer port) {
+    protected static void findWarsOnClassPath(ServletContainer container, PathHandler pathHandler, ClassLoader classLoader, Set<String> foundURLs, Integer port) {
         try {
             Enumeration<URL> resources = classLoader.getResources("WEB-INF/web.xml");
             while (resources.hasMoreElements()) {
@@ -180,7 +180,7 @@ public final class Main {
                 if (text.startsWith("jar:")) {
                     text = text.substring(4);
                 }
-                createWebapp(handlers, foundURLs, port, text);
+                createWebapp(container, pathHandler, foundURLs, port, text);
             }
         } catch (Exception e) {
             System.out.println("Failed to find web.xml on classpath: " + e);
@@ -189,7 +189,7 @@ public final class Main {
 
     }
 
-    private static void createWebapp(HandlerCollection handlers, Set<String> foundURLs, Integer port, String war) {
+    private static void createWebapp(ServletContainer container, PathHandler pathHandler, Set<String> foundURLs, Integer port, String war) {
         if (foundURLs.add(war)) {
             String contextPath = createContextPath(war);
             String filePath = createFilePath(war);
@@ -202,14 +202,17 @@ public final class Main {
             } else {
                 System.out.println("adding web context path: /" + contextPath + " war: " + filePath);
             }
-            WebAppContext webapp = new WebAppContext();
-            webapp.setContextPath("/" + contextPath);
-            webapp.setWar("file://" + filePath);
-            handlers.addHandler(webapp);
-            webapp.setThrowUnavailableOnStartupException(true);
+
+            DeploymentInfo servletBuilder = Servlets.deployment();
+            servletBuilder.setContextPath("/" + contextPath);
+            servletBuilder.setResourceManager(new FileResourceManager(new File(filePath), 500 * 1000));
+
+            DeploymentManager deploymentManager = container.addDeployment(servletBuilder);
+            deploymentManager.deploy();
+
             try {
                 System.out.println("Starting web app: " + contextPath);
-                webapp.start();
+                pathHandler.addExactPath(servletBuilder.getContextPath(), deploymentManager.start());
                 System.out.println("Started web app: " + contextPath + " without any exceptions!");
             } catch (Throwable e) {
                 logException(e);
