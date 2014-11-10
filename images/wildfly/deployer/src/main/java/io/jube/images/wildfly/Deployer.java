@@ -51,7 +51,8 @@ public final class Deployer {
 
         String protocol = findArg(args, "wildfly.protocol", "http-remoting");
         String address = findArg(args, "wildfly.address", "127.0.0.1");
-        String port = findArg(args, "wildfly.port", "9990");
+        int port = Integer.parseInt(findArg(args, "wildfly.port", "9990"));
+        int offset = Integer.parseInt(findArg(args, "wildfly.port-offset", "0"));
 
         String username = findArg(args, "wildfly.username", null);
         String password = findArg(args, "wildfly.password", null);
@@ -65,10 +66,10 @@ public final class Deployer {
                 System.out.println(String.format("Connecting with %s/%s", username, password));
                 SimpleCallbackHandler.username = username;
                 SimpleCallbackHandler.password = password;
-                client = ModelControllerClient.Factory.create(protocol, address, Integer.parseInt(port), new SimpleCallbackHandler());
+                client = ModelControllerClient.Factory.create(protocol, address, port + offset, new SimpleCallbackHandler());
             } else {
                 System.out.println("No auth used.");
-                client = ModelControllerClient.Factory.create(protocol, address, Integer.parseInt(port));
+                client = ModelControllerClient.Factory.create(protocol, address, port + offset);
             }
             ServerDeploymentManager deploymentManager = ServerDeploymentManager.Factory.create(client);
 

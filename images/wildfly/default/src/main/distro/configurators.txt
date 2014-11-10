@@ -1,0 +1,2 @@
+# WildFly ccustom config
+io.fabric8.jube.process.config.WildFlyConfigurator

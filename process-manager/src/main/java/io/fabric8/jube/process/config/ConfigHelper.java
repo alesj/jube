@@ -17,8 +17,12 @@ package io.fabric8.jube.process.config;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import io.fabric8.jube.util.InstallHelper;
+import io.fabric8.utils.Files;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,6 +31,8 @@ import org.slf4j.LoggerFactory;
  */
 public final class ConfigHelper {
     private static final transient Logger LOG = LoggerFactory.getLogger(ConfigHelper.class);
+
+    private static final Map<String, Configurator> map = new HashMap<>();
 
     private ConfigHelper() {
         // utility class
@@ -41,6 +47,29 @@ public final class ConfigHelper {
         }
         // TODO load the env vars from the env.sh file?
         return answer;
+    }
+
+    @SuppressWarnings("unchecked")
+    public static synchronized void customProcessConfig(ProcessConfig config, File installDir) throws IOException {
+        File configurators = new File(installDir, "configurators.txt");
+        if (configurators.exists()) {
+            List<String> list = Files.readLines(configurators);
+            for (String className : list) {
+                if (className.startsWith("#")) continue;
+
+                Configurator configurator = map.get(className);
+                if (configurator == null) {
+                    try {
+                        Class<? extends Configurator> clazz = (Class<? extends Configurator>) ConfigHelper.class.getClassLoader().loadClass(className);
+                        configurator = clazz.newInstance();
+                        map.put(className, configurator);
+                    } catch (Exception e) {
+                        throw new IOException(e);
+                    }
+                }
+                configurator.configure(config, installDir);
+            }
+        }
     }
 
     /**

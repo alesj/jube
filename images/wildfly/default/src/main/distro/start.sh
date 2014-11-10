@@ -28,7 +28,7 @@ export LAUNCH_JBOSS_IN_BACKGROUND=true
 export JBOSS_PIDFILE=process.pid
 
 # REMOVE nohup ONCE standalone.sh IS FIXED!
-nohup $APP_BASE/wildfly/bin/standalone.sh 2>&1 > server.log &
+nohup $APP_BASE/wildfly/bin/standalone.sh -Djboss.node.name=node$NODE_NAME -Djboss.server.data.dir=$APP_BASE/wildfly/standalone/data$NODE_NAME -Djboss.server.temp.dir=$APP_BASE/wildfly/standalone/tmp$NODE_NAME -Djboss.socket.binding.port-offset=$PORT_OFFSET 2>&1 > server.log &
 
 # Setup the JVM
 if [ "x$JAVA" = "x" ]; then
@@ -39,4 +39,4 @@ if [ "x$JAVA" = "x" ]; then
     fi
 fi
 
-$JAVA -jar deployer.jar $APP_BASE
+$JAVA -jar deployer.jar $APP_BASE wildfly.port-offset=$PORT_OFFSET

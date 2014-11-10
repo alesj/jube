@@ -310,6 +310,9 @@ public class ProcessManagerService implements ProcessManagerServiceMBean {
         ProcessConfig config = loadProcessConfig(installDir, options);
         InstallContext installContext = new InstallContext(installDir, false);
         installTask.install(installContext, config, id, installDir);
+
+        ConfigHelper.customProcessConfig(config, installDir);
+
         ConfigHelper.saveProcessConfig(config, installDir);
 
         Installation installation = createInstallation(options.getUrl(), id, installDir, config);
